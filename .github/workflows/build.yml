@@ -11,6 +11,8 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -47,3 +49,16 @@ jobs:
         with:
           name: DYYY
           path: ${{ github.workspace }}/packages/*.deb
+
+      - name: Publish debs to Release (匿名/镜像下载用)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="autobuild-${{ github.run_number }}"
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" packages/*.deb \
+            --repo "${{ github.repository }}" \
+            --title "auto build #${{ github.run_number }}" \
+            --notes "自动构建产物：默认 / rootless / roothide 三种包。TrollStore+Dopamine(roothide) 请用 *_roothide.deb"
