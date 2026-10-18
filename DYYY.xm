@@ -6931,6 +6931,28 @@ static Class tabBarButtonClass = nil;
     %orig;
 
     if (DYYYGetBool(@"DYYYHideComment")) {
+        // 彻底隐藏评论底栏：原实现只 removeFromSuperview 把输入框背景抠掉，
+        // 但其父容器（评论输入条容器）仍保留深灰背景，在 40.7.0 作者页/作品详情里
+        // 会露出一条灰色“黑边”。这里连带把整个输入条容器的背景清空并隐藏，
+        // 使其真正隐藏、与页面黑底融为一体，恢复沉浸感。
+        UIView *ancestor = self.superview;
+        Class inputContainerClass = NSClassFromString(@"AWECommentInputViewSwiftImpl.CommentInputContainerView");
+        while (ancestor) {
+            if (inputContainerClass && [ancestor isKindOfClass:inputContainerClass]) {
+                ancestor.backgroundColor = [UIColor clearColor];
+                ancestor.layer.backgroundColor = [UIColor clearColor].CGColor;
+                ancestor.opaque = NO;
+                ancestor.hidden = YES;
+                break;
+            }
+            ancestor = ancestor.superview;
+        }
+        // 兜底：若未命中具体容器类（类名漂移），把直接父视图背景清空，消除灰底黑边
+        if (ancestor == nil && self.superview) {
+            self.superview.backgroundColor = [UIColor clearColor];
+            self.superview.layer.backgroundColor = [UIColor clearColor].CGColor;
+            self.superview.opaque = NO;
+        }
         [self removeFromSuperview];
         return;
     }
@@ -7367,20 +7389,7 @@ static Class tabBarButtonClass = nil;
         }
     }
 
-    // 仅在“底部确实存在可见 tabBar”的上下文才按 tabBar 高度收缩视图高度。
-    // 作者页/模态详情播放器没有可见 tabBar，本应铺满全屏；若仍按 tabBar 高度收缩，
-    // 视频底部会空出一截露出黑色背景。故此处增加 tabBar 可见性判断。
-    BOOL hasVisibleTabBar = NO;
-    UITabBarController *tabBarController = self.tabBarController;
-    if (tabBarController && !tabBarController.tabBar.hidden && tabBarController.tabBar.window) {
-        hasVisibleTabBar = YES;
-    }
-
-    // 额外兜底：若承载视频的容器本身就是整屏高度（模态/详情播放器常见），
-    // 同样直接铺满，避免底部露出黑色背景。
-    BOOL containerIsFullScreen = (fabs(superviewHeight - [UIScreen mainScreen].bounds.size.height) < 1.0);
-
-    if (useFullHeight || !hasVisibleTabBar || containerIsFullScreen) {
+    if (useFullHeight) {
         frame.size.height = superviewHeight;
     } else {
         frame.size.height = superviewHeight - gCurrentTabBarHeight;
