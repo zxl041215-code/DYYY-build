@@ -9043,6 +9043,7 @@ static void findTargetViewInView(UIView *view) {
     [self dyyy_diagDump];
 }
 
+%new
 - (void)dyyy_diagDump {
     NSString *refer = nil;
     @try {
