@@ -6931,28 +6931,6 @@ static Class tabBarButtonClass = nil;
     %orig;
 
     if (DYYYGetBool(@"DYYYHideComment")) {
-        // 彻底隐藏评论底栏：原实现只 removeFromSuperview 把输入框背景抠掉，
-        // 但其父容器（评论输入条容器）仍保留深灰背景，在 40.7.0 作者页/作品详情里
-        // 会露出一条灰色“黑边”。这里连带把整个输入条容器的背景清空并隐藏，
-        // 使其真正隐藏、与页面黑底融为一体，恢复沉浸感。
-        UIView *ancestor = self.superview;
-        Class inputContainerClass = NSClassFromString(@"AWECommentInputViewSwiftImpl.CommentInputContainerView");
-        while (ancestor) {
-            if (inputContainerClass && [ancestor isKindOfClass:inputContainerClass]) {
-                ancestor.backgroundColor = [UIColor clearColor];
-                ancestor.layer.backgroundColor = [UIColor clearColor].CGColor;
-                ancestor.opaque = NO;
-                ancestor.hidden = YES;
-                break;
-            }
-            ancestor = ancestor.superview;
-        }
-        // 兜底：若未命中具体容器类（类名漂移），把直接父视图背景清空，消除灰底黑边
-        if (ancestor == nil && self.superview) {
-            self.superview.backgroundColor = [UIColor clearColor];
-            self.superview.layer.backgroundColor = [UIColor clearColor].CGColor;
-            self.superview.opaque = NO;
-        }
         [self removeFromSuperview];
         return;
     }
@@ -9055,3 +9033,72 @@ static void findTargetViewInView(UIView *view) {
                                                     }];
     }
 }
+
+#pragma mark - DYYY 诊断日志（临时，定位作者页/作品详情底部灰带，正式版请删除）
+%hook AWEPlayInteractionViewController
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    // 黑边只在开启“隐藏底栏评论”时出现，故以此作为 dump 开关，减少刷屏
+    if (!DYYYGetBool(@"DYYYHideComment")) return;
+    [self dyyy_diagDump];
+}
+
+- (void)dyyy_diagDump {
+    NSString *refer = nil;
+    @try {
+        if ([self respondsToSelector:NSSelectorFromString(@"referString")]) {
+            refer = [self valueForKey:@"referString"];
+        }
+    } @catch (NSException *e) {}
+    NSLog(@"[DYYYDIAG] === AWEPlayInteractionViewController appeared referString=%@ ===", refer);
+
+    UIView *root = self.view;
+    if (!root) return;
+
+    void (^__block walk)(UIView *, NSInteger) = ^(UIView *v, NSInteger d) {
+        if (!v) return;
+        UIColor *bg = v.backgroundColor;
+        CGFloat maxc = 0, a = 0;
+        if (bg) {
+            CGFloat r = 0, g = 0, b = 0;
+            [bg getRed:&r green:&g blue:&b alpha:&a];
+            maxc = MAX(r, MAX(g, b));
+        }
+        NSString *cls = NSStringFromClass([v class]);
+        BOOL nameHit = [cls containsString:@"Comment"] || [cls containsString:@"Input"] ||
+                      [cls containsString:@"Bar"] || [cls containsString:@"Bottom"] ||
+                      [cls containsString:@"Container"] || [cls containsString:@"Background"] ||
+                      [cls containsString:@"Panel"];
+        if ((bg && a > 0.5 && maxc < 0.25) || nameHit) {
+            CGRect f = [v convertRect:v.bounds toView:nil];
+            NSLog(@"[DYYYDIAG]   d%ld %@ frame=%@ hidden=%d alpha=%.2f bgA=%.2f maxRGB=%.3f super=%@",
+                  (long)d, cls, NSStringFromCGRect(f), v.hidden, v.alpha, a, maxc,
+                  NSStringFromClass([v.superview class]));
+        }
+        for (UIView *s in v.subviews) walk(s, d + 1);
+    };
+    walk(root, 0);
+
+    // 1 秒后再 dump 一次，抓取可能延迟加入的输入条容器
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (!self.view) return;
+        NSMutableString *sb = [NSMutableString stringWithString:@"[DYYYDIAG] delayed(1s):"];
+        void (^__block walk2)(UIView *, NSInteger) = ^(UIView *v, NSInteger d) {
+            if (!v) return;
+            UIColor *bg = v.backgroundColor;
+            CGFloat maxc = 0, a2 = 0;
+            if (bg) { CGFloat r=0,g=0,b=0; [bg getRed:&r green:&g blue:&b alpha:&a2]; maxc = MAX(r,MAX(g,b)); }
+            NSString *cls = NSStringFromClass([v class]);
+            BOOL nh = [cls containsString:@"Comment"]||[cls containsString:@"Input"]||[cls containsString:@"Bar"]||[cls containsString:@"Bottom"]||[cls containsString:@"Container"]||[cls containsString:@"Background"]||[cls containsString:@"Panel"];
+            if ((bg && a2 > 0.5 && maxc < 0.25) || nh) {
+                CGRect f = [v convertRect:v.bounds toView:nil];
+                [sb appendFormat:@"\n    d%ld %@ frame=%@ hidden=%d alpha=%.2f bgA=%.2f maxRGB=%.3f super=%@",(long)d,cls,NSStringFromCGRect(f),v.hidden,v.alpha,a2,maxc,NSStringFromClass([v.superview class])];
+            }
+            for (UIView *s in v.subviews) walk2(s, d+1);
+        };
+        walk2(self.view, 0);
+        NSLog(@"%@", sb);
+    });
+}
+%end
